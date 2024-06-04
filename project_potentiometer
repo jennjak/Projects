@@ -1,0 +1,99 @@
+// Kommentar: Motorstyrning m.h.a en potentiometer, 
+// potentiometern har värden inom intervallet [0,4095], vid: 
+// adcr < 2047 så styrs motorn bakåt. 
+// adcr > 2047 så styrs motorn framåt.
+// adcr = 2047 så bromsar motorn.
+// Jennie: För att minska precisionen hos potentiometerinställningen så är intervallen +- 100 enhet
+
+//Utvecklingskommentar: kod har införts/sparats för :
+// temperaturmätning (om vi önskar koda för att se om maten varit för varm, t.ex transport av frysprodukter )
+// LCD skärm
+// Lysdioder för att verifiera tillstånd. 
+// hastighetsbegränsning möjlig se rad 117 kommentar **
+
+// Förfining av kod:
+// Minimera motorns arbete genom att införa delays i koden så att byte av tillstånd inte sker direkt.
+// Denna kod är påbyggningsbar och har grundkod från Linus övningsexempel + potentiometer grundkod från laborationerna inom HE1028
+// Motorns effekt styrs genom att koppla in en sekundar strömkälla till DVR8833, max 12V för våra nuvarande motorer.
+// hastighetbegränsning kan ske via DRV88rr motordrive i port AS, BS för respektive motor.... 
+//....dessa ports har man möjlighet att justera strömmen via potentiometer...
+// ...möjlighet att justera kod för att styra hastigheten via styrningspotentiometern...
+//... (ex utföra beräkningar ocg föra in värden i AS,BS för hastighetsbegränsning).
+
+
+int main(void){
+    int ms=0, s=0, c=0;
+    int dac=0, speed=-100;
+    int adcr, tmpr;
+    
+    int adcr_min = 0;         // minimum value for potentiometer
+    int adcr_max = 4095;      // maximum value for potentiometer
+    int adcr_half = (4094/2); // half value, can purhaps be in a intervall (+- 10%) 
+
+
+    t5omsi();                               // Initialize timer5 1kHz
+
+    T1powerUpInitPWM(0xF);                  // Timer #1, Ch #0, 1, 2 & 3 PWM (0xF initilize all channels (0-3))
+    ADC3powerUpInit(1);                     // Initialize ADC0, Ch3 & Ch16 
+
+    //eclic_global_interrupt_enable();        // !!!!! Enable Interrupt !!!!!
+    rcu_periph_clock_enable(RCU_GPIOB);
+	  rcu_periph_clock_enable(RCU_GPIOA);
+	  gpio_init(GPIOB, GPIO_MODE_OUT_PP, GPIO_OSPEED_50MHZ, GPIO_PIN_0); // Reserved for xIN1
+    gpio_init(GPIOB, GPIO_MODE_OUT_PP, GPIO_OSPEED_50MHZ, GPIO_PIN_1); // Reseved for xIN2
+
+    while (1) {
+        idle++;                             // Manage Async events
+
+        if (adc_flag_get(ADC0,ADC_FLAG_EOC)==SET) { // ...ADC done?
+          if (adc_flag_get(ADC0,ADC_FLAG_EOIC)==SET) { //...ch3 or ch16?
+            tmpr = adc_inserted_data_read(ADC0, ADC_INSERTED_CHANNEL_0);
+            //l88mem(6,((0x680-tmpr)/5)+25);
+            adc_flag_clear(ADC0, ADC_FLAG_EOC);
+            adc_flag_clear(ADC0, ADC_FLAG_EOIC);
+          } else {
+            adcr = adc_regular_data_read(ADC0); // ......get data
+            adc_flag_clear(ADC0, ADC_FLAG_EOC); // ......clear IF
+          }
+        }
+
+            // gpio_bit_set - Sends High to pin, gpio_bit_reset - sends Low to pin
+            if (adcr < (adcr_half - 100)){
+              //forward 
+              // **inför hastighetsbegränsning genom att använda timers channels för ADC omvandling, istf att då skicka 1/0 så skickas PWM/1/0.
+              // ...se datablad för DRV8833.
+              T1setPWMch1(2000 - adcr);                         // in: PA1, out: XIN1
+              T1setPWMch2(0);                                   // in: PA2, out: XIN2
+              
+              // För enbart styrning utan hastighetsjustering:
+              //gpio_bit_set(GPIOB, GPIO_PIN_0); 
+			        //gpio_bit_reset(GPIOB, GPIO_PIN_1);
+            }
+            else if (adcr > (adcr_half + 100)){
+              //backward
+              // se ** för hastighetsbegränsning, står i rad 117
+              T1setPWMch1(0);                                         // in: PA1, out: XIN1
+              T1setPWMch2(adcr-2000);                                 // in: PA2, out: XIN2    
+
+              // För enbart styrning utan hastighetsjustering:
+              //gpio_bit_reset(GPIOB, GPIO_PIN_0);
+			        //gpio_bit_set(GPIOB, GPIO_PIN_1);
+            }
+            else if (((adcr_half - 100 )< adcr < (adcr_half + 100))){
+              //break
+              T1setPWMch1(0);
+              T1setPWMch2(0);
+
+
+              // För enbart styrning utan hastighetsjustering:
+              //gpio_bit_set(GPIOB, GPIO_PIN_0);
+			        //gpio_bit_set(GPIOB, GPIO_PIN_1);
+            }
+            
+            
+            adc_software_trigger_enable(ADC0, //Trigger another ADC conversion!
+                                      ADC_REGULAR_CHANNEL);
+            
+        
+    }
+}
